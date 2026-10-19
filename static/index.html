@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steam Review Analyzer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #16191f; --muted: #626b7a; --border: #e1e4ea;
+    --accent: #2f6fdf; --neg: #d6455d; --neu: #9aa3b2; --pos: #2fa36b; --warn: #c98a12;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1218; --card: #171b23; --text: #e8ebf1; --muted: #8d96a6; --border: #262c37;
+      --accent: #5b93f5; --neg: #ef6a80; --neu: #6c7585; --pos: #4cc48a; --warn: #e0a83a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { margin: 0 0 4px; font-size: 28px; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .search { position: relative; display: flex; gap: 8px; flex-wrap: wrap; }
+  .search input[type=text] { flex: 1 1 260px; padding: 11px 14px; font: inherit; color: var(--text);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+  select, button { font: inherit; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #results { position: absolute; top: 48px; left: 0; right: 0; z-index: 5; background: var(--card);
+    border: 1px solid var(--border); border-radius: 8px; overflow: hidden; display: none; }
+  #results div { display: flex; align-items: center; gap: 12px; padding: 8px 12px; cursor: pointer; }
+  #results div:hover { background: var(--bg); }
+  #results img { width: 92px; height: 35px; object-fit: cover; border-radius: 4px; }
+  .game { margin-top: 12px; color: var(--muted); }
+  .game b { color: var(--text); }
+  .progress { height: 6px; background: var(--border); border-radius: 3px; margin-top: 16px; overflow: hidden; display: none; }
+  .progress div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 20px 0; }
+  .kpi .label { color: var(--muted); font-size: 13px; }
+  .kpi .value { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .kpi .hint { color: var(--muted); font-size: 12px; }
+  #k-count { font-size: 22px; line-height: 42px; white-space: nowrap; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  h2 { font-size: 16px; margin: 0 0 4px; }
+  .card p.desc { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+  .chart { position: relative; height: 300px; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 24px 0 12px; }
+  .tabs button { cursor: pointer; }
+  .tabs button.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .reviews { display: grid; gap: 10px; }
+  .review .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--bg); border: 1px solid var(--border); }
+  .tag.pos { color: var(--pos); } .tag.neg { color: var(--neg); } .tag.warn { color: var(--warn); }
+  .review .text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9em; overflow: hidden; }
+  .empty { color: var(--muted); padding: 12px 0; }
+  #dash { display: none; }
+  .err { color: var(--neg); margin-top: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🎮 Steam Review Analyzer</h1>
+  <p class="sub">Pick a game: Jev reads its recent reviews and tells you what players really think, sarcasm included.</p>
+
+  <div class="card">
+    <div class="search">
+      <input id="q" type="text" placeholder="Game name… (e.g. Cyberpunk, Helldivers, Minecraft)" autocomplete="off">
+      <select id="n">
+        <option value="50">50 reviews</option>
+        <option value="100">100 reviews</option>
+        <option value="200" selected>200 reviews</option>
+        <option value="500">500 reviews</option>
+        <option value="1000">1,000 reviews</option>
+        <option value="2000">2,000 reviews</option>
+        <option value="5000">5,000 reviews</option>
+      </select>
+      <button type="button" id="go" class="primary" disabled>Analyze</button>
+      <div id="results"></div>
+    </div>
+    <div class="game" id="game">No game selected.</div>
+    <div class="progress" id="progress"><div></div></div>
+    <div class="err" id="err"></div>
+  </div>
+
+  <div id="dash">
+    <div class="kpis">
+      <div class="card kpi"><div class="label">Reviews analyzed</div><div class="value" id="k-count">0</div><div class="hint" id="k-steam"></div></div>
+      <div class="card kpi"><div class="label">Average real sentiment</div><div class="value" id="k-sent">–</div><div class="hint">out of 5 (1 = very negative)</div></div>
+      <div class="card kpi"><div class="label">Sarcastic reviews</div><div class="value" id="k-sarc">–</div><div class="hint">probability &gt; 50%</div></div>
+      <div class="card kpi"><div class="label">Thumb ≠ text</div><div class="value" id="k-mis">–</div><div class="hint">rating contradicts the review</div></div>
+      <div class="card kpi"><div class="label">Jev cost</div><div class="value" id="k-cost">–</div><div class="hint" id="k-tok"></div></div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>What are players talking about?</h2>
+        <p class="desc">Main topic of each review, colored by real sentiment.</p>
+        <div class="chart"><canvas id="c-topics"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Sentiment over time</h2>
+        <p class="desc">Average real sentiment (1 to 5) per time slice.</p>
+        <div class="chart"><canvas id="c-time"></canvas></div>
+      </div>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <button type="button" data-tab="mismatch" class="on">👍 but brutal text</button>
+      <button type="button" data-tab="sarcasm">🙃 Most sarcastic</button>
+      <button type="button" data-tab="constructive">🛠️ Most constructive</button>
+      <button type="button" data-tab="negative">💀 Most negative</button>
+    </div>
+    <div class="reviews" id="reviews"></div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const TOPIC_LABELS = { bugs: "Bugs", performance: "Performance", price: "Price", gameplay: "Gameplay",
+  story: "Story", content: "Content", multiplayer: "Multiplayer", other: "Other" };
+
+let selected = null, source = null, rows = [], total = 0, pricePerM = 0.042, tab = "mismatch";
+
+// Steam score is a thumb; real sentiment is 1..5. They "disagree" when they land on opposite sides.
+const isNeg = (r) => r.sentiment < 2.5, isPos = (r) => r.sentiment > 3.5;
+const isMismatch = (r) => (r.voted_up && isNeg(r)) || (!r.voted_up && isPos(r));
+
+// ---------- search ----------
+let searchTimer;
+$("q").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  const q = $("q").value.trim();
+  if (!q) { $("results").style.display = "none"; return; }
+  searchTimer = setTimeout(async () => {
+    const items = await fetch(`/api/search?q=${encodeURIComponent(q)}`).then((r) => r.json());
+    const box = $("results");
+    box.replaceChildren(...items.map((it) => {
+      const row = document.createElement("div");
+      const img = document.createElement("img"); img.src = it.image || ""; img.alt = "";
+      const name = document.createElement("span"); name.textContent = it.name;
+      row.append(img, name);
+      row.onclick = () => pick(it);
+      return row;
+    }));
+    box.style.display = items.length ? "block" : "none";
+  }, 250);
+});
+$("q").addEventListener("keydown", (e) => { if (e.key === "Enter" && selected) start(); });
+
+function pick(it) {
+  selected = it;
+  $("q").value = it.name;
+  $("results").style.display = "none";
+  $("game").innerHTML = "";
+  $("game").append("Selected game: ", Object.assign(document.createElement("b"), { textContent: it.name }));
+  $("go").disabled = false;
+}
+
+// ---------- charts ----------
+Chart.defaults.locale = "en";
+Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+Chart.defaults.color = css("--muted");
+Chart.defaults.borderColor = css("--border");
+
+const topicsChart = new Chart($("c-topics"), {
+  type: "bar",
+  data: { labels: [], datasets: [
+    { label: "Negative", data: [], backgroundColor: css("--neg") },
+    { label: "Neutral", data: [], backgroundColor: css("--neu") },
+    { label: "Positive", data: [], backgroundColor: css("--pos") },
+  ] },
+  options: { indexAxis: "y", maintainAspectRatio: false, animation: { duration: 200 },
+    scales: { x: { stacked: true, ticks: { precision: 0 } }, y: { stacked: true, grid: { display: false } } },
+    plugins: { legend: { position: "bottom" } } },
+});
+
+const timeChart = new Chart($("c-time"), {
+  type: "line",
+  data: { labels: [], datasets: [{ label: "Average sentiment", data: [], borderColor: css("--accent"),
+    backgroundColor: css("--accent"), tension: 0.3, pointRadius: 3 }] },
+  options: { maintainAspectRatio: false, animation: { duration: 200 },
+    scales: { y: { min: 1, max: 5 } }, plugins: { legend: { display: false } } },
+});
+
+// ---------- analysis ----------
+$("go").onclick = start;
+
+function start() {
+  if (!selected) return;
+  if (source) source.close();
+  rows = [];
+  total = Number($("n").value);  // replaced by the real count once Steam runs out of pages
+  $("err").textContent = "";
+  $("dash").style.display = "block";
+  $("progress").style.display = "block";
+  $("go").disabled = true;
+  render();
+
+  source = new EventSource(`/api/analyze?appid=${selected.id}&n=${$("n").value}`);
+  source.addEventListener("progress", (e) => {
+    const d = JSON.parse(e.data), s = d.summary;
+    pricePerM = d.price_per_m;
+    $("k-steam").textContent = s ? `Steam: ${s.review_score_desc} (${s.total_reviews.toLocaleString("en")} reviews)` : "";
+  });
+  source.addEventListener("fetch_done", (e) => {
+    total = JSON.parse(e.data).total;
+    if (!total) $("err").textContent = "No English reviews found for this game.";
+    scheduleRender();
+  });
+  source.addEventListener("review", (e) => { rows.push(JSON.parse(e.data)); scheduleRender(); });
+  source.addEventListener("error", (e) => {
+    if (e.data) $("err").textContent = JSON.parse(e.data);
+    else { $("err").textContent ||= "Connection lost."; finish(); }  // don't let EventSource auto-reconnect and restart the scan
+  });
+  source.addEventListener("done", finish);
+}
+
+function finish() {
+  if (source) source.close();
+  $("go").disabled = false;
+  render();
+}
+
+let renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  setTimeout(() => { renderQueued = false; render(); }, 250);
+}
+
+function render() {
+  const n = rows.length;
+  $("progress").firstElementChild.style.width = total ? `${(100 * n) / total}%` : "0";
+  $("k-count").textContent = `${n.toLocaleString("en")} / ${total.toLocaleString("en")}`;
+  const avg = (f) => rows.reduce((s, r) => s + f(r), 0) / n;
+  const pct = (f) => `${Math.round((100 * rows.filter(f).length) / n)}%`;
+  const tokens = rows.reduce((s, r) => s + r.tokens, 0);
+  $("k-sent").textContent = n ? avg((r) => r.sentiment).toFixed(2) : "–";
+  $("k-sarc").textContent = n ? pct((r) => r.sarcasm > 0.5) : "–";
+  $("k-mis").textContent = n ? pct(isMismatch) : "–";
+  $("k-cost").textContent = n ? `$${((tokens / 1e6) * pricePerM).toFixed(4)}` : "–";
+  $("k-tok").textContent = n ? `${tokens.toLocaleString("en")} input tokens` : "";
+
+  // topics, sorted by volume
+  const topics = Object.keys(TOPIC_LABELS).map((t) => {
+    const rs = rows.filter((r) => r.topic === t);
+    const neg = rs.filter(isNeg).length, pos = rs.filter(isPos).length;
+    return { t, neg, pos, neu: rs.length - neg - pos, all: rs.length };
+  }).filter((x) => x.all).sort((a, b) => b.all - a.all);
+  topicsChart.data.labels = topics.map((x) => TOPIC_LABELS[x.t]);
+  topicsChart.data.datasets[0].data = topics.map((x) => x.neg);
+  topicsChart.data.datasets[1].data = topics.map((x) => x.neu);
+  topicsChart.data.datasets[2].data = topics.map((x) => x.pos);
+  topicsChart.update();
+
+  // timeline: split the covered period into 10 equal bins
+  if (n > 1) {
+    const ts = rows.map((r) => r.timestamp), lo = Math.min(...ts), hi = Math.max(...ts) + 1;
+    const BINS = 10, w = (hi - lo) / BINS, bins = Array.from({ length: BINS }, () => []);
+    rows.forEach((r) => { bins[Math.min(BINS - 1, Math.floor((r.timestamp - lo) / w))].push(r.sentiment); });
+    const span = hi - lo, fmt = span < 2 * 86400
+      ? { hour: "2-digit", minute: "2-digit" } : { day: "numeric", month: "short" };
+    timeChart.data.labels = bins.map((_, i) => new Date((lo + i * w) * 1000).toLocaleString("en", fmt));
+    timeChart.data.datasets[0].data = bins.map((b) => b.length ? b.reduce((a, c) => a + c, 0) / b.length : null);
+    timeChart.update();
+  }
+
+  renderReviews();
+}
+
+// ---------- review lists ----------
+$("tabs").addEventListener("click", (e) => {
+  if (!e.target.dataset.tab) return;
+  tab = e.target.dataset.tab;
+  [...$("tabs").children].forEach((b) => { b.classList.toggle("on", b === e.target); });
+  renderReviews();
+});
+
+function renderReviews() {
+  const pick = {
+    mismatch: () => rows.filter(isMismatch).sort((a, b) =>
+      Math.abs((b.voted_up ? 5 : 1) - b.sentiment) - Math.abs((a.voted_up ? 5 : 1) - a.sentiment)),
+    sarcasm: () => rows.filter((r) => r.sarcasm > 0.5).sort((a, b) => b.sarcasm - a.sarcasm),
+    constructive: () => [...rows].sort((a, b) => b.constructive - a.constructive),
+    negative: () => [...rows].sort((a, b) => a.sentiment - b.sentiment),
+  }[tab]().slice(0, 8);
+
+  const box = $("reviews");
+  if (!pick.length) {
+    box.replaceChildren(Object.assign(document.createElement("div"),
+      { className: "empty", textContent: rows.length ? "No reviews in this category yet." : "" }));
+    return;
+  }
+  box.replaceChildren(...pick.map((r) => {
+    const card = document.createElement("div"); card.className = "card review";
+    const meta = document.createElement("div"); meta.className = "meta";
+    const tag = (txt, cls = "") => Object.assign(document.createElement("span"), { className: `tag ${cls}`, textContent: txt });
+    meta.append(
+      tag(r.voted_up ? "👍 Recommended" : "👎 Not recommended", r.voted_up ? "pos" : "neg"),
+      tag(`Real sentiment ${r.sentiment.toFixed(1)}/5`, isNeg(r) ? "neg" : isPos(r) ? "pos" : ""),
+      tag(TOPIC_LABELS[r.topic] || r.topic),
+      tag(`Sarcasm ${Math.round(r.sarcasm * 100)}%`, r.sarcasm > 0.5 ? "warn" : ""),
+      tag(`Constructive ${Math.round(r.constructive * 100)}%`),
+      tag(`${r.playtime_h} h played`),
+    );
+    const text = document.createElement("div"); text.className = "text"; text.textContent = r.text;
+    card.append(meta, text);
+    return card;
+  }));
+}
+</script>
+</body>
+</html>
